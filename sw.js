@@ -1,11 +1,11 @@
 // Japa Counter Service Worker v1.0
 const CACHE_NAME = 'japa-counter-v32';
 const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png'
+  './',
+  './index.html',
+  './manifest.json',
+  './icons/icon-192.png',
+  './icons/icon-512.png'
 ];
 
 // Install event - cache files
