@@ -446,7 +446,7 @@
     <div class="card step" id="calibrationStep2">
       <div class="step-header"><div class="step-num" id="s2n">2</div><div class="step-title">Teach Your Word <span class="tip" onclick="toggleTip('tip2')">?</span></div></div>
       <div id="tip2" class="tip-box">Say one word from your mantra 5 times with pauses. Same volume/distance as actual chanting.</div>
-      <button id="btnWord" class="btn-rec idle" onclick="captureWord()" disabled>🎤 Record Word ×5</button>
+      <button id="btnWord" class="btn-rec idle" onclick="captureWord()" ontouchend="captureWord()">🎤 Record Word ×5</button>
       <div id="wordViz" class="viz" style="display:none"></div>
       <div id="wordStatus" style="font-size:12px;color:var(--text-mid);margin-top:2px;text-align:center"></div>
     </div>
@@ -1194,21 +1194,127 @@ async function captureNoise(){
   var viz=initViz('noiseViz');document.getElementById('noiseStatus').textContent='Capturing...';var specS=[],enS=[],fr=0,mx=600;
   function tick(){if(fr>=mx){noiseProfile=avgArrays(specS);noiseEnergy=enS.reduce(function(a,b){return a+b},0)/enS.length;noiseReady=true;btn.className='btn-rec ok';btn.textContent='✅ Noise captured';document.getElementById('noiseStatus').textContent='Level: '+noiseEnergy.toFixed(1);document.getElementById('s1n').classList.add('done');document.getElementById('s1n').textContent='✓';document.getElementById('btnWord').disabled=false;checkReady();return}updateViz(viz);specS.push(getSpectrum());enS.push(getEnergy());fr++;requestAnimationFrame(tick)}requestAnimationFrame(tick);
 }
+var capturingWord = false;
 async function captureWord(){
+  // Immediate feedback - this should show instantly
+  var btn=document.getElementById('btnWord');
+  var statusEl=document.getElementById('wordStatus');
+  
+  // Show we received the tap
+  statusEl.textContent='Button tapped! Starting...';
+  statusEl.style.color='var(--accent)';
+  btn.textContent='⏳ Starting...';
+  
+  // Prevent double execution
+  if(capturingWord){
+    statusEl.textContent='Already recording...';
+    return;
+  }
+  
+  // Check if noise was captured first
+  if(!noiseReady){
+    statusEl.textContent='⚠️ Please capture silence first (Step 1)';
+    statusEl.style.color='var(--danger)';
+    btn.textContent='🎤 Record Word ×5';
+    return;
+  }
+  
+  capturingWord = true;
+  
   // iOS Safari requires user gesture to start AudioContext
-  if(actx && actx.state === 'suspended'){
-    await actx.resume();
+  try{
+    if(actx && actx.state === 'suspended'){
+      statusEl.textContent='Resuming audio...';
+      await actx.resume();
+    }
+  }catch(e){
+    statusEl.textContent='Audio error: '+e.message;
+    capturingWord = false;
+    btn.textContent='🎤 Record Word ×5';
+    return;
   }
-  if(!(await initAudio()))return;
+  
+  statusEl.textContent='Initializing microphone...';
+  var audioOk = await initAudio();
+  if(!audioOk){
+    statusEl.textContent='⚠️ Microphone access denied';
+    capturingWord = false;
+    btn.textContent='🎤 Record Word ×5';
+    return;
+  }
+  
   // Resume again after init for iOS
-  if(actx && actx.state === 'suspended'){
-    await actx.resume();
+  try{
+    if(actx && actx.state === 'suspended'){
+      await actx.resume();
+    }
+  }catch(e){}
+  
+  btn.className='btn-rec busy';
+  btn.textContent='🔴 Say word 5 times...';
+  statusEl.style.color='var(--text-mid)';
+  
+  var viz=initViz('wordViz');
+  wordSamples=[];
+  statusEl.textContent='🎤 Speak now...';
+  
+  var inW=false,wBuf=[],silC=0,eTh=noiseEnergy+10;
+  var timeout=setTimeout(function(){finish()},15000);
+  
+  function finish(){
+    clearTimeout(timeout);
+    capturingWord = false;
+    if(wordSamples.length>=2){
+      var allS=wordSamples.map(function(s){return s.spectrum});
+      wordFingerprint={
+        spectrum:avgArrays(allS),
+        centroid:wordSamples.reduce(function(a,s){return a+s.centroid},0)/wordSamples.length,
+        minEnergy:Math.min.apply(null,wordSamples.map(function(s){return s.peakEnergy}))*0.5,
+        avgDuration:wordSamples.reduce(function(a,s){return a+s.duration},0)/wordSamples.length
+      };
+      avgWordDuration=wordFingerprint.avgDuration;
+      wordReady=true;
+      btn.className='btn-rec ok';
+      btn.textContent='✅ '+wordSamples.length+' samples';
+      document.getElementById('s2n').classList.add('done');
+      document.getElementById('s2n').textContent='✓';
+      statusEl.textContent='Calibration complete!';
+      statusEl.style.color='var(--success)';
+    }else{
+      btn.className='btn-rec idle';
+      btn.textContent='🎤 Record Word ×5 (retry)';
+      statusEl.textContent='Only got '+wordSamples.length+' samples. Try speaking louder.';
+      statusEl.style.color='var(--danger)';
+    }
+    checkReady();
   }
-  var btn=document.getElementById('btnWord');btn.className='btn-rec busy';btn.textContent='🔴 Say word 5 times...';
-  var viz=initViz('wordViz');wordSamples=[];document.getElementById('wordStatus').textContent='Speak now...';
-  var inW=false,wBuf=[],silC=0,eTh=noiseEnergy+10,timeout=setTimeout(function(){finish()},12000);
-  function finish(){clearTimeout(timeout);if(wordSamples.length>=2){var allS=wordSamples.map(function(s){return s.spectrum});wordFingerprint={spectrum:avgArrays(allS),centroid:wordSamples.reduce(function(a,s){return a+s.centroid},0)/wordSamples.length,minEnergy:Math.min.apply(null,wordSamples.map(function(s){return s.peakEnergy}))*0.5,avgDuration:wordSamples.reduce(function(a,s){return a+s.duration},0)/wordSamples.length};avgWordDuration=wordFingerprint.avgDuration;wordReady=true;btn.className='btn-rec ok';btn.textContent='✅ '+wordSamples.length+' samples';document.getElementById('s2n').classList.add('done');document.getElementById('s2n').textContent='✓'}else{btn.className='btn-rec idle';btn.textContent='🎤 Record Word ×5 (retry)'}checkReady()}
-  function tick(){if(wordSamples.length>=5){finish();return}updateViz(viz);var energy=getEnergy(),spec=getSpectrum(),centroid=getCentroid();if(energy>eTh){if(!inW){inW=true;wBuf=[]}wBuf.push({spec:denoiseSpectrum(spec),energy:energy,centroid:centroid});silC=0}else{silC++;if(inW&&silC>10){inW=false;if(wBuf.length>=4){var aS=avgArrays(wBuf.map(function(f){return f.spec}));var aC=wBuf.reduce(function(a,f){return a+f.centroid},0)/wBuf.length;var pE=Math.max.apply(null,wBuf.map(function(f){return f.energy}));wordSamples.push({spectrum:aS,centroid:aC,peakEnergy:pE,duration:wBuf.length});document.getElementById('wordStatus').textContent=wordSamples.length+'/5...'}wBuf=[]}}requestAnimationFrame(tick)}requestAnimationFrame(tick);
+  
+  function tick(){
+    if(wordSamples.length>=5){finish();return}
+    updateViz(viz);
+    var energy=getEnergy(),spec=getSpectrum(),centroid=getCentroid();
+    
+    if(energy>eTh){
+      if(!inW){inW=true;wBuf=[]}
+      wBuf.push({spec:denoiseSpectrum(spec),energy:energy,centroid:centroid});
+      silC=0;
+    }else{
+      silC++;
+      if(inW&&silC>10){
+        inW=false;
+        if(wBuf.length>=4){
+          var aS=avgArrays(wBuf.map(function(f){return f.spec}));
+          var aC=wBuf.reduce(function(a,f){return a+f.centroid},0)/wBuf.length;
+          var pE=Math.max.apply(null,wBuf.map(function(f){return f.energy}));
+          wordSamples.push({spectrum:aS,centroid:aC,peakEnergy:pE,duration:wBuf.length});
+          statusEl.textContent=wordSamples.length+'/5 captured ✓';
+        }
+        wBuf=[];
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 }
 
 // =================== ADAPTIVE NOISE RECALIBRATION ===================
