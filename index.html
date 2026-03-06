@@ -1181,12 +1181,30 @@ function updateViz(v){var spec=getSpectrum();var bars=v.children;for(var i=0;i<b
 
 // =================== CALIBRATION ===================
 async function captureNoise(){
-  if(!(await initAudio()))return;var btn=document.getElementById('btnNoise');btn.className='btn-rec busy';btn.textContent='🔇 Stay quiet for 10s...';
+  // iOS Safari requires user gesture to start AudioContext
+  if(actx && actx.state === 'suspended'){
+    await actx.resume();
+  }
+  if(!(await initAudio()))return;
+  // Resume again after init for iOS
+  if(actx && actx.state === 'suspended'){
+    await actx.resume();
+  }
+  var btn=document.getElementById('btnNoise');btn.className='btn-rec busy';btn.textContent='🔇 Stay quiet for 10s...';
   var viz=initViz('noiseViz');document.getElementById('noiseStatus').textContent='Capturing...';var specS=[],enS=[],fr=0,mx=600;
   function tick(){if(fr>=mx){noiseProfile=avgArrays(specS);noiseEnergy=enS.reduce(function(a,b){return a+b},0)/enS.length;noiseReady=true;btn.className='btn-rec ok';btn.textContent='✅ Noise captured';document.getElementById('noiseStatus').textContent='Level: '+noiseEnergy.toFixed(1);document.getElementById('s1n').classList.add('done');document.getElementById('s1n').textContent='✓';document.getElementById('btnWord').disabled=false;checkReady();return}updateViz(viz);specS.push(getSpectrum());enS.push(getEnergy());fr++;requestAnimationFrame(tick)}requestAnimationFrame(tick);
 }
 async function captureWord(){
-  if(!(await initAudio()))return;var btn=document.getElementById('btnWord');btn.className='btn-rec busy';btn.textContent='🔴 Say word 5 times...';
+  // iOS Safari requires user gesture to start AudioContext
+  if(actx && actx.state === 'suspended'){
+    await actx.resume();
+  }
+  if(!(await initAudio()))return;
+  // Resume again after init for iOS
+  if(actx && actx.state === 'suspended'){
+    await actx.resume();
+  }
+  var btn=document.getElementById('btnWord');btn.className='btn-rec busy';btn.textContent='🔴 Say word 5 times...';
   var viz=initViz('wordViz');wordSamples=[];document.getElementById('wordStatus').textContent='Speak now...';
   var inW=false,wBuf=[],silC=0,eTh=noiseEnergy+10,timeout=setTimeout(function(){finish()},12000);
   function finish(){clearTimeout(timeout);if(wordSamples.length>=2){var allS=wordSamples.map(function(s){return s.spectrum});wordFingerprint={spectrum:avgArrays(allS),centroid:wordSamples.reduce(function(a,s){return a+s.centroid},0)/wordSamples.length,minEnergy:Math.min.apply(null,wordSamples.map(function(s){return s.peakEnergy}))*0.5,avgDuration:wordSamples.reduce(function(a,s){return a+s.duration},0)/wordSamples.length};avgWordDuration=wordFingerprint.avgDuration;wordReady=true;btn.className='btn-rec ok';btn.textContent='✅ '+wordSamples.length+' samples';document.getElementById('s2n').classList.add('done');document.getElementById('s2n').textContent='✓'}else{btn.className='btn-rec idle';btn.textContent='🎤 Record Word ×5 (retry)'}checkReady()}
@@ -2095,7 +2113,7 @@ function startAudioDetection(){
       dSilCount=0;
     }else{
       dSilCount++;
-      if(dInWord&&dSilCount>3){
+      if(dInWord&&dSilCount>8){
         dInWord=false;
         var dur=dWordBuf.length;
         var peakE=Math.max.apply(null,dWordBuf.map(function(f){return f.energy}));
@@ -2104,14 +2122,18 @@ function startAudioDetection(){
         var minEnergy=wordFingerprint?wordFingerprint.minEnergy*0.25:8;
         if(peakE<minEnergy){dWordBuf=[];detectAF=requestAnimationFrame(tick);return}
         
-        var minDur=avgWordDuration?avgWordDuration*0.15:3;
-        var maxDur=avgWordDuration?avgWordDuration*5.0:40;
+        var minDur=avgWordDuration?avgWordDuration*0.3:5;
+        var maxDur=avgWordDuration?avgWordDuration*4.0:35;
         if(dur<minDur||dur>maxDur){dWordBuf=[];detectAF=requestAnimationFrame(tick);return}
         
         if(now<ttsPauseUntil){dWordBuf=[];detectAF=requestAnimationFrame(tick);return}
         
+        // Minimum cooldown to prevent double-counting (at least 300ms between counts)
+        var minCooldown=300;
+        if(now-lastDetectTime<minCooldown){dWordBuf=[];detectAF=requestAnimationFrame(tick);return}
+        
         // Cooldown check
-        var effectiveCooldown=Math.min(baseCooldownMs*0.6,adaptiveCooldown);
+        var effectiveCooldown=Math.max(minCooldown,Math.min(baseCooldownMs*0.6,adaptiveCooldown));
         if(now-lastDetectTime<effectiveCooldown){dWordBuf=[];detectAF=requestAnimationFrame(tick);return}
         
         // In hybrid mode, skip if Google just detected
